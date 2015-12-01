@@ -6,7 +6,6 @@ import (
 	"github.com/codegangsta/cli"
 	"github.com/gorilla/websocket"
 	"encoding/json"
-	"strings"
 )
 
 const (
@@ -14,9 +13,7 @@ const (
   messageBufferSize = 256
 )
 
-var name = "ds0nt-bot"
-
-type client struct {
+type socketClient struct {
   socket *websocket.Conn
   send   chan message
 }
@@ -26,48 +23,33 @@ type message struct {
   Payload interface{} `json:"payload"`
 }
 
-var responder *processor
 
 type processor struct {
 	In  chan *message
 	Out chan *message
 }
 
-func newProcessor(client *client) *processor {
+func newMessage(t string, payload interface{}) *message {
+	return &message{t, payload}
+}
+
+func newProcessor(client *socketClient) *processor {
 	in := make(chan *message, messageBufferSize)
 	out := make(chan *message, messageBufferSize)
 	return &processor{in, out}
 }
 
-func (p *processor) process() {
-	p.Out <-&message{"nick", name}
-	log.Println("Starting processor")
-	for msg := range p.In {
-		if msg.Type == "chat" {
-			text := msg.Payload.(string)
-			if strings.HasPrefix(text, name) {
-				continue
-			}
-			log.Println("I hear stuff", text)
-			if strings.Contains(text, name) {
-				log.Println("Someone is talking to me:", text)
-				p.Out <-&message{"chat", "Du hast mich gefragt, und ich hab Nichsts gesact..."}
-			}
-		}
-	}
-}
-
-func (p *processor) resultsTo(client *client) {
+func (p *processor) resultsTo(client *socketClient) {
 	for msg := range p.Out {
     client.send <- *msg
 	}
 }
 
-func newClient(socket *websocket.Conn, name string) *client {
-  return &client{socket, make(chan message, messageBufferSize)}
+func newClient(socket *websocket.Conn) *socketClient {
+  return &socketClient{socket, make(chan message, messageBufferSize)}
 }
 
-func (c *client) read() {
+func (c *socketClient) read(processor *processor) {
   for {
     _, msg, err := c.socket.ReadMessage()
     if err == nil {
@@ -78,7 +60,7 @@ func (c *client) read() {
         continue
       }
       log.Printf("Message Received: %v", f)
-			responder.In <-&f
+			processor.In <-&f
     } else {
       break
     }
@@ -86,7 +68,7 @@ func (c *client) read() {
   c.socket.Close()
 }
 
-func (c *client) write() {
+func (c *socketClient) write() {
   for msg := range c.send {
     bytes, err := json.Marshal(&msg)
     if err != nil {
@@ -101,7 +83,7 @@ func (c *client) write() {
   }
 }
 
-func dial(url string) {
+func dial(url string) (*socketClient, *processor) {
 	log.Printf("Dialing: %s", url)
 	d := websocket.Dialer{}
 	ws, _, err := d.Dial(url, nil)
@@ -109,16 +91,17 @@ func dial(url string) {
 		log.Panicf("An error occured while dialing: %s", err)
 	}
 
-  client := newClient(ws, "ds0nt-bot")
-	responder = newProcessor(client)
-	go responder.process()
-	go responder.resultsTo(client)
+  client := newClient(ws)
+	processor := newProcessor(client)
+
+	go processor.resultsTo(client)
+  go client.read(processor)
   go client.write()
-  client.read()
+	return client, processor
 }
 
-
 func main() {
+
 	log.Println("Web Commander CLI Client")
 	// https://github.com/codegangsta/cli
 	app := cli.NewApp()
@@ -126,11 +109,26 @@ func main() {
 	app.Usage = "Web Commander CLI Client"
 	app.Commands = []cli.Command{
 		{
-			Name:    "dial",
+			Name:    "respond",
 			Action: func(c *cli.Context) {
-				dial(c.Args().First())
+				client, processor := dial(c.Args().First())
+				bot := newRespondBot(processor, "ds0nt-bot", "Du hast mich?")
+				go bot.run()
+				client.read(processor)
 			},
 		},
+			{
+				Name:    "shorten",
+				Action: func(c *cli.Context) {
+					client, processor := dial(c.Args().First())
+					bot, err := newShortenBot(processor, "ds0nt-bot")
+					if err != nil {
+						log.Fatalf("There was an error starting the shorten bot: %v", err)
+					}
+					go bot.run()
+					client.read(processor)
+				},
+			},
 	}
 	app.Run(os.Args)
 }
