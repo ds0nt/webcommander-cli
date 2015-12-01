@@ -117,18 +117,27 @@ func main() {
 				client.read(processor)
 			},
 		},
-			{
-				Name:    "shorten",
-				Action: func(c *cli.Context) {
-					client, processor := dial(c.Args().First())
-					bot, err := newShortenBot(processor, "ds0nt-bot")
-					if err != nil {
-						log.Fatalf("There was an error starting the shorten bot: %v", err)
-					}
-					go bot.run()
-					client.read(processor)
-				},
+		{
+			Name:    "shorten",
+			Action: func(c *cli.Context) {
+				client, processor := dial(c.Args().First())
+				bot, err := newShortenBot(processor, "ds0nt-bot")
+				if err != nil {
+					log.Fatalf("There was an error starting the shorten bot: %v", err)
+				}
+				go bot.run()
+				client.read(processor)
 			},
+		},
+		{
+			Name:    "insight",
+			Action: func(c *cli.Context) {
+				client, processor := dial(c.Args().First())
+				bot := newInsightBot(processor, "ds0nt-bot")
+				go bot.run()
+				client.read(processor)
+			},
+		},
 	}
 	app.Run(os.Args)
 }
